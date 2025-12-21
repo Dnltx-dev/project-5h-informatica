@@ -88,7 +88,7 @@ class Player(pygame.sprite.Sprite):
         pygame.draw.rect(surface, BROWN, (14, 28, 6, 4))
         return surface
 
-    def update(self, platforms, enemies, powerups, flag):
+    def update(self, platforms, enemies, powerups, coins, flag):
         keys = pygame.key.get_pressed()
         
         base_speed = self.speed
@@ -131,9 +131,13 @@ class Player(pygame.sprite.Sprite):
         for enemy in enemies:
             if self.rect.colliderect(enemy.rect):
                 if self.vel_y > 0 and self.rect.bottom <= enemy.rect.top + 20:
-                    enemy.kill()
-                    self.vel_y = self.jump_power * 0.6
-                    return "enemy_killed"
+                    if enemy.enemy_type == "spike":
+                        if not self.invincible:
+                            return "hit"
+                    else:
+                        enemy.kill()
+                        self.vel_y = self.jump_power * 0.6
+                        return "enemy_killed"
                 elif not self.invincible:
                     return "hit"
 
@@ -142,6 +146,11 @@ class Player(pygame.sprite.Sprite):
                 effect = powerup.collect()
                 powerup.kill()
                 return effect
+
+        for coin in coins:
+            if self.rect.colliderect(coin.rect):
+                coin.kill()
+                return "coin_collected"
 
         if flag and self.rect.colliderect(flag.rect):
             return "level_complete"
@@ -263,10 +272,11 @@ class Enemy(pygame.sprite.Sprite):
         if self.vel_y > 10:
             self.vel_y = 10
 
-        self.rect.x += self.vel_x * self.direction
-        
-        if self.rect.x <= self.patrol_start or self.rect.x >= self.patrol_end:
-            self.direction *= -1
+        if self.enemy_type != "spike":
+            self.rect.x += self.vel_x * self.direction
+
+            if self.rect.x <= self.patrol_start or self.rect.x >= self.patrol_end:
+                self.direction *= -1
 
         self.rect.y += self.vel_y
         for platform in platforms:
@@ -284,8 +294,8 @@ class Boss(pygame.sprite.Sprite):
         self.rect = self.image.get_rect()
         self.rect.x = x
         self.rect.y = y
-        self.health = 10
-        self.max_health = 10
+        self.health = 5
+        self.max_health = 5
         self.vel_x = 3
         self.vel_y = 0
         self.gravity = 0.5
@@ -736,7 +746,7 @@ class Game:
         sys.exit()
 
     def update(self):
-        result = self.player.update(self.platforms, self.enemies, self.powerups, self.flag)
+        result = self.player.update(self.platforms, self.enemies, self.powerups, self.coins, self.flag)
 
         if result == "double_jump":
             self.player.can_double_jump = True
@@ -748,8 +758,11 @@ class Game:
             self.player.speed_boost_timer = 300
         elif result == "enemy_killed":
             self.score += 100
+        elif result == "coin_collected":
+            self.score += 50
         elif result == "hit" or result == "died":
             self.lives -= 1
+            self.score = max(0, self.score - 500)
             if self.lives <= 0:
                 self.state = "game_over"
             else:
@@ -758,24 +771,31 @@ class Game:
                 self.player.invincible_timer = 120
                 return
         elif result == "level_complete":
-            self.score += 1000
-            self.current_level += 1
-            if self.current_level > self.total_levels:
-                self.state = "victory"
+            if self.current_level == 6 and self.boss is not None:
+                pass  # Do not complete level if boss is still alive in level 6
             else:
-                self.reset_level()
-                return
+                self.score += 1000
+                self.current_level += 1
+                if self.current_level > self.total_levels:
+                    self.state = "victory"
+                else:
+                    self.reset_level()
+                    return
 
         for enemy in self.enemies:
             enemy.update(self.platforms)
 
+        for coin in self.coins:
+            coin.update()
+
         if self.boss:
             self.boss.update(self.platforms, self.player)
-            
+
             for proj in list(self.boss.projectiles):
                 if self.player.rect.colliderect(proj.rect) and not self.player.invincible:
                     proj.kill()
                     self.lives -= 1
+                    self.score = max(0, self.score - 500)
                     if self.lives <= 0:
                         self.state = "game_over"
                     else:
@@ -783,7 +803,7 @@ class Game:
                         self.player.invincible = True
                         self.player.invincible_timer = 120
                         return
-            
+
             if self.player.rect.colliderect(self.boss.rect):
                 if self.player.vel_y > 0 and self.player.rect.bottom < self.boss.rect.centery:
                     if self.boss.take_damage():
@@ -794,6 +814,7 @@ class Game:
                             self.score += 2000
                 elif not self.player.invincible:
                     self.lives -= 1
+                    self.score = max(0, self.score - 500)
                     if self.lives <= 0:
                         self.state = "game_over"
                     else:
